@@ -37,7 +37,6 @@ class LitModel(pl.LightningModule):
         self.conf = conf
 
         self.model = conf.make_model_conf().make_model()
-        self.model.encoder = conf.make_encoder_conf().make_model().encoder
         self.ema_model = copy.deepcopy(self.model)
         self.ema_model.requires_grad_(False)
         self.ema_model.eval()
@@ -71,49 +70,7 @@ class LitModel(pl.LightningModule):
             print(f'loading pretrain ... {conf.pretrain.name}')
             state = torch.load(conf.pretrain.path, map_location='cpu')
             print('step:', state['global_step'])
-
-            # Assuming the checkpoint contains a 'state_dict' key
-            state_dict = state.get("state_dict", state)
-
-            # Add "model." prefix to each key if it's not already there
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                if k.startswith("model.time_embed."):
-                    new_key = k.replace("model.time_embed.", "model.time_embed.time_embed.")
-                    new_state_dict[new_key] = v
-                elif k.startswith("ema_model.time_embed."):
-                    new_key = k.replace("ema_model.time_embed.", "ema_model.time_embed.time_embed.")
-
-                if k.startswith("model.") or k.startswith("ema_model") or k.startswith("x_T"):
-                    if k.startswith("model.time_embed.") or k.startswith("ema_model.time_embed."):
-                        continue
-                    else:
-                        new_state_dict[k] = v
-                else:
-                    new_state_dict[f"model.{k}"] = v
-
-            # If the checkpoint is just the state_dict
-            # torch.save(new_state_dict, "fixed_checkpoint.pth")
-
-            # Or if it’s part of a larger checkpoint dict
-            state["state_dict"] = new_state_dict
-            # Freeze only the parameters whose names are in the loaded state_dict
-            pretrained_keys = set(state["state_dict"].keys())
-
-            self.load_state_dict(new_state_dict, strict=False)
-            print('model loaded')
-            
-            for name, param in self.named_parameters():
-                # Match key names exactly (or partially if needed)
-                if name in pretrained_keys:
-                    param.requires_grad = False
-
-            # for name, param in self.model.named_parameters():
-            #     if param.requires_grad == True:
-            #         print(f'param.requires_grad: {name}')
-            for name, param in self.model.encoder.named_parameters():
-                # print(f'param.requires_grad: {name} {param.shape}')
-                assert param.requires_grad == True, f'param.requires_grad: {name}'
+            self.load_state_dict(state['state_dict'], strict=False)
 
         if conf.latent_infer_path is not None:
             print('loading latent stats ...')
@@ -185,8 +142,6 @@ class LitModel(pl.LightningModule):
         # TODO:
         assert self.conf.model_type.has_autoenc()
         cond = self.ema_model.encoder.forward(x)
-        # print(f'cond_encode.shape: {cond.shape}')
-        # cond = self.encoder.forward(x)
         return cond
 
     def encode_stochastic(self, x, cond, T=None):
@@ -249,7 +204,6 @@ class LitModel(pl.LightningModule):
         if latent mode => return the inferred latent dataset
         """
         print('on train dataloader start ...')
-        print(self.conf.batch_size)
         if self.conf.train_mode.require_dataset_infer():
             if self.conds is None:
                 # usually we load self.conds from a file
@@ -402,14 +356,12 @@ class LitModel(pl.LightningModule):
             # batch size here is local!
             # forward
             if self.conf.train_mode.require_dataset_infer():
-                # print(f'batch: {batch}')
                 # this mode as pre-calculated cond
                 cond = batch[0]
                 if self.conf.latent_znormalize:
                     cond = (cond - self.conds_mean.to(
                         self.device)) / self.conds_std.to(self.device)
             else:
-                # print(f'batch: {batch}')
                 imgs, idxs = batch['img'], batch['index']
                 # print(f'(rank {self.global_rank}) batch size:', len(imgs))
                 x_start = imgs
@@ -418,7 +370,6 @@ class LitModel(pl.LightningModule):
                 """
                 main training mode!!!
                 """
-                # print(f'x_start.shape: {x_start.shape}')
                 # with numpy seed we have the problem that the sample t's are related!
                 t, weight = self.T_sampler.sample(len(x_start), x_start.device)
                 losses = self.sampler.training_losses(model=self.model,
@@ -925,6 +876,7 @@ def is_time(num_samples, every, step_size):
 
 def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
     print('conf:', conf.name)
+    print(f'conf.sample_size: {conf.sample_size}')
     # assert not (conf.fp16 and conf.grad_clip > 0
     #             ), 'pytorch lightning has bug with amp + gradient clipping'
     model = LitModel(conf)

@@ -56,6 +56,15 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             use_new_attention_order=conf.use_new_attention_order,
             pool=conf.enc_pool,
         ).make_model()
+        # for block in self.input_blocks:
+        #     for param in block.parameters():
+        #         param.requires_grad = False
+        # for block in self.middle_block:
+        #     for param in block.parameters():
+        #         param.requires_grad = False
+        # for block in self.output_blocks:
+        #     for param in block.parameters():
+        #         param.requires_grad = False
 
         if conf.latent_net_conf is not None:
             self.latent_net = conf.latent_net_conf.make_model()
@@ -75,6 +84,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
 
     def sample_z(self, n: int, device):
         assert self.conf.is_stochastic
+        print(f'sample_z.shape: {n, self.conf.enc_out_channels}')
         return torch.randn(n, self.conf.enc_out_channels, device=device)
 
     def noise_to_cond(self, noise: Tensor):
@@ -84,6 +94,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
 
     def encode(self, x):
         cond = self.encoder.forward(x)
+        # print(f'cond_encode.shape: {cond.shape}')
         return {'cond': cond}
 
     @property
@@ -137,6 +148,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             noise: random noise (to predict the cond)
         """
 
+        # print(f'cond_fw.shape: {cond}')
         if t_cond is None:
             t_cond = t
 

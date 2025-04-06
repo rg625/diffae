@@ -108,6 +108,7 @@ def ffhq128_ddpm():
     conf.total_samples = 48_000_000
     conf.img_size = 128
     conf.net_ch = 128
+    conf.name = 'ffhq128_ddpm_130M'
     # channels:
     # 3 => 128 * 1 => 128 * 1 => 128 * 2 => 128 * 3 => 128 * 4
     # sizes:
@@ -128,6 +129,7 @@ def ffhq128_autoenc_base():
     conf.scale_up_gpus(4)
     conf.img_size = 128
     conf.net_ch = 128
+    # conf.sample_size = 16
     # final resolution = 8x8
     conf.net_ch_mult = (1, 1, 2, 3, 4)
     # final resolution = 4x4
@@ -184,15 +186,26 @@ def ffhq128_autoenc_72M():
 
 def ffhq128_ddpm_130M():
     conf = ffhq128_ddpm()
+    conf.batch_size = 28
+    conf.sample_size = 1
     conf.total_samples = 130_000_000
     conf.eval_ema_every_samples = 10_000_000
     conf.eval_every_samples = 10_000_000
-    conf.name = 'ffhq128_ddpm_130M'
+    conf.name = 'ffhq128_ddpm_130M_ss1'
     return conf
 
 
 def ffhq128_autoenc_130M():
+    # conf.conf_ddpm = ffhq128_ddpm_130M()
     conf = ffhq128_autoenc_base()
+    conf.batch_size = 1
+    conf.sample_size = 1
+    # conf.sample_size = 32
+    conf.conf_ddpm = ffhq128_ddpm_130M()
+    conf.pretrain = PretrainConfig(
+        name='ffhq128_ddpm_130M_ss1',
+        path=f'checkpoints/{conf.conf_ddpm.name}/last.ckpt',
+    )
     conf.total_samples = 130_000_000
     conf.eval_ema_every_samples = 10_000_000
     conf.eval_every_samples = 10_000_000
