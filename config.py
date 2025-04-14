@@ -52,6 +52,7 @@ class PretrainConfig(BaseConfig):
 class TrainConfig(BaseConfig):
     # random seed
     seed: int = 0
+    epochs: int = 1000
     train_mode: TrainMode = TrainMode.diffusion
     train_cond0_prob: float = 0
     train_pred_xstart_detach: bool = True

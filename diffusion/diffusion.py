@@ -92,7 +92,9 @@ class SpacedDiffusionBeatGans(GaussianDiffusionBeatGans):
         conf.betas = np.array(new_betas)
         super().__init__(conf)
 
-    def p_mean_variance(self, model: Model, *args, **kwargs):  # pylint: disable=signature-differs
+    def p_mean_variance(self, model: Model, *args, **kwargs):  # pylint: disable=signature-
+        if kwargs is None:
+            kwargs = {}
         return super().p_mean_variance(self._wrap_model(model), *args,
                                        **kwargs)
 
@@ -101,6 +103,8 @@ class SpacedDiffusionBeatGans(GaussianDiffusionBeatGans):
                                        **kwargs)
 
     def condition_mean(self, cond_fn, *args, **kwargs):
+        if kwargs is None:
+            kwargs = {}
         return super().condition_mean(self._wrap_model(cond_fn), *args,
                                       **kwargs)
 
@@ -130,7 +134,7 @@ class _WrappedModel:
         self.rescale_timesteps = rescale_timesteps
         self.original_num_steps = original_num_steps
 
-    def forward(self, x, t, t_cond=None, **kwargs):
+    def forward(self, x, t, **kwargs):
         """
         Args:
             t: t's with differrent ranges (can be << T due to smaller eval T) need to be converted to the original t's
@@ -146,11 +150,7 @@ class _WrappedModel:
                 new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
             return new_ts
 
-        if t_cond is not None:
-            # support t_cond
-            t_cond = do(t_cond)
-
-        return self.model(x=x, t=do(t), t_cond=t_cond, **kwargs)
+        return self.model(x=x, t=do(t), **kwargs)
 
     def __getattr__(self, name):
         # allow for calling the model's methods

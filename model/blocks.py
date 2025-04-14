@@ -88,8 +88,8 @@ class ResBlock(TimestepBlock):
         - conv
         out_layers
         - norm
-        - (modulation)
         - act
+        - dropout
         - conv
     """
     def __init__(self, conf: ResBlockConfig):
@@ -119,54 +119,27 @@ class ResBlock(TimestepBlock):
             self.h_upd = self.x_upd = nn.Identity()
 
         #############################
-        # OUT LAYERS CONDITIONS
+        # OUT LAYERS
         #############################
-        if conf.use_condition:
-            # condition layers for the out_layers
-            self.emb_layers = nn.Sequential(
-                nn.SiLU(),
-                linear(conf.emb_channels, 2 * conf.out_channels),
-            )
+        conv = conv_nd(conf.dims,
+                       conf.out_channels,
+                       conf.out_channels,
+                       3,
+                       padding=1)
+        if conf.use_zero_module:
+            conv = zero_module(conv)
 
-            if conf.two_cond:
-                self.cond_emb_layers = nn.Sequential(
-                    nn.SiLU(),
-                    linear(conf.cond_emb_channels, conf.out_channels),
-                )
-            #############################
-            # OUT LAYERS (ignored when there is no condition)
-            #############################
-            # original version
-            conv = conv_nd(conf.dims,
-                           conf.out_channels,
-                           conf.out_channels,
-                           3,
-                           padding=1)
-            if conf.use_zero_module:
-                # zere out the weights
-                # it seems to help training
-                conv = zero_module(conv)
-
-            # construct the layers
-            # - norm
-            # - (modulation)
-            # - act
-            # - dropout
-            # - conv
-            layers = []
-            layers += [
-                normalization(conf.out_channels),
-                nn.SiLU(),
-                nn.Dropout(p=conf.dropout),
-                conv,
-            ]
-            self.out_layers = nn.Sequential(*layers)
+        self.out_layers = nn.Sequential(
+            normalization(conf.out_channels),
+            nn.SiLU(),
+            nn.Dropout(p=conf.dropout),
+            conv,
+        )
 
         #############################
         # SKIP LAYERS
         #############################
         if conf.out_channels == conf.channels:
-            # cannot be used with gatedconv, also gatedconv is alsways used as the first block
             self.skip_connection = nn.Identity()
         else:
             if conf.use_conv:
@@ -184,29 +157,16 @@ class ResBlock(TimestepBlock):
 
     def forward(self, x, emb=None, cond=None, lateral=None):
         """
-        Apply the block to a Tensor, conditioned on a timestep embedding.
+        Apply the block to a Tensor, with optional lateral connection.
 
         Args:
             x: input
-            lateral: lateral connection from the encoder
+            lateral: lateral connection from the encoder (if applicable)
         """
-        return torch_checkpoint(self._forward, (x, emb, cond, lateral),
-                                self.conf.use_checkpoint)
+        return torch_checkpoint(self._forward, (x, lateral), self.conf.use_checkpoint)
 
-    def _forward(
-        self,
-        x,
-        emb=None,
-        cond=None,
-        lateral=None,
-    ):
-        """
-        Args:
-            lateral: required if "has_lateral" and non-gated, with gated, it can be supplied optionally    
-        """
+    def _forward(self, x, lateral=None):
         if self.conf.has_lateral:
-            # lateral may be supplied even if it doesn't require
-            # the model will take the lateral only if "has_lateral"
             assert lateral is not None
             x = th.cat([x, lateral], dim=1)
 
@@ -219,121 +179,8 @@ class ResBlock(TimestepBlock):
         else:
             h = self.in_layers(x)
 
-        if self.conf.use_condition:
-            # it's possible that the network may not receieve the time emb
-            # this happens with autoenc and setting the time_at
-            if emb is not None:
-                emb_out = self.emb_layers(emb).type(h.dtype)
-            else:
-                emb_out = None
-
-            if self.conf.two_cond:
-                # it's possible that the network is two_cond
-                # but it doesn't get the second condition
-                # in which case, we ignore the second condition
-                # and treat as if the network has one condition
-                if cond is None:
-                    cond_out = None
-                else:
-                    # print(f'cond.shape: {cond.shape}')
-                    cond_out = self.cond_emb_layers(cond).type(h.dtype)
-
-                if cond_out is not None:
-                    while len(cond_out.shape) < len(h.shape):
-                        cond_out = cond_out[..., None]
-            else:
-                cond_out = None
-
-            # this is the new refactored code
-            h = apply_conditions(
-                h=h,
-                emb=emb_out,
-                cond=cond_out,
-                layers=self.out_layers,
-                scale_bias=1,
-                in_channels=self.conf.out_channels,
-                up_down_layer=None,
-            )
-
+        h = self.out_layers(h)
         return self.skip_connection(x) + h
-
-
-def apply_conditions(
-    h,
-    emb=None,
-    cond=None,
-    layers: nn.Sequential = None,
-    scale_bias: float = 1,
-    in_channels: int = 512,
-    up_down_layer: nn.Module = None,
-):
-    """
-    apply conditions on the feature maps
-
-    Args:
-        emb: time conditional (ready to scale + shift)
-        cond: encoder's conditional (read to scale + shift)
-    """
-    two_cond = emb is not None and cond is not None
-
-    if emb is not None:
-        # adjusting shapes
-        while len(emb.shape) < len(h.shape):
-            emb = emb[..., None]
-
-    if two_cond:
-        # adjusting shapes
-        while len(cond.shape) < len(h.shape):
-            cond = cond[..., None]
-        # time first
-        scale_shifts = [emb, cond]
-    else:
-        # "cond" is not used with single cond mode
-        scale_shifts = [emb]
-
-    # support scale, shift or shift only
-    for i, each in enumerate(scale_shifts):
-        if each is None:
-            # special case: the condition is not provided
-            a = None
-            b = None
-        else:
-            if each.shape[1] == in_channels * 2:
-                a, b = th.chunk(each, 2, dim=1)
-            else:
-                a = each
-                b = None
-        scale_shifts[i] = (a, b)
-
-    # condition scale bias could be a list
-    if isinstance(scale_bias, Number):
-        biases = [scale_bias] * len(scale_shifts)
-    else:
-        # a list
-        biases = scale_bias
-
-    # default, the scale & shift are applied after the group norm but BEFORE SiLU
-    pre_layers, post_layers = layers[0], layers[1:]
-
-    # spilt the post layer to be able to scale up or down before conv
-    # post layers will contain only the conv
-    mid_layers, post_layers = post_layers[:-2], post_layers[-2:]
-
-    h = pre_layers(h)
-    # scale and shift for each condition
-    for i, (scale, shift) in enumerate(scale_shifts):
-        # if scale is None, it indicates that the condition is not provided
-        if scale is not None:
-            h = h * (biases[i] + scale)
-            if shift is not None:
-                h = h + shift
-    h = mid_layers(h)
-
-    # upscale or downscale if any just before the last conv
-    if up_down_layer is not None:
-        h = up_down_layer(h)
-    h = post_layers(h)
-    return h
 
 
 class Upsample(nn.Module):

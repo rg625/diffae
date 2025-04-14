@@ -29,12 +29,10 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
         super().__init__(conf)
         self.conf = conf
 
-        # having only time, cond
         self.time_embed = TimeStyleSeperateEmbed(
             time_channels=conf.model_channels,
             time_out_channels=conf.embed_channels,
         )
-
         self.encoder = BeatGANsEncoderConfig(
             image_size=conf.image_size,
             in_channels=conf.in_channels,
@@ -42,8 +40,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             out_hid_channels=conf.enc_out_channels,
             out_channels=conf.enc_out_channels,
             num_res_blocks=conf.enc_num_res_block,
-            attention_resolutions=(conf.enc_attn_resolutions
-                                   or conf.attention_resolutions),
+            attention_resolutions=(conf.enc_attn_resolutions or conf.attention_resolutions),
             dropout=conf.dropout,
             channel_mult=conf.enc_channel_mult or conf.channel_mult,
             use_time_condition=False,
@@ -56,19 +53,65 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             use_new_attention_order=conf.use_new_attention_order,
             pool=conf.enc_pool,
         ).make_model()
-        # for block in self.input_blocks:
-        #     for param in block.parameters():
-        #         param.requires_grad = False
-        # for block in self.middle_block:
-        #     for param in block.parameters():
-        #         param.requires_grad = False
-        # for block in self.output_blocks:
-        #     for param in block.parameters():
-        #         param.requires_grad = False
 
         if conf.latent_net_conf is not None:
             self.latent_net = conf.latent_net_conf.make_model()
 
+    def forward(self, x, t, **kwargs):
+        # Pure unconditional forward pass
+        if t is not None:
+            t_emb = timestep_embedding(t, self.conf.model_channels)
+        else:
+            t_emb = None
+
+        res = self.time_embed.forward(time_emb=t_emb)
+        emb = res.time_emb
+
+        h = x.type(self.dtype)
+        hs = [[] for _ in range(len(self.conf.channel_mult))]
+        k = 0
+        for i in range(len(self.input_num_blocks)):
+            for j in range(self.input_num_blocks[i]):
+                h = self.input_blocks[k](h, emb=emb)  # Only t_emb
+                hs[i].append(h)
+                k += 1
+
+        h = self.middle_block(h, emb=emb)
+
+        k = 0
+        for i in range(len(self.output_num_blocks)):
+            for j in range(self.output_num_blocks[i]):
+                try:
+                    lateral = hs[-i - 1].pop()
+                except IndexError:
+                    lateral = None
+                h = self.output_blocks[k](h, emb=emb, lateral=lateral)
+                k += 1
+
+        pred = self.out(h)
+        return AutoencReturn(pred=pred)
+
+    def guided_sample(self, x, t, x_start, guidance_scale=1.0):
+        """
+        Apply classifier-free guidance during sampling.
+        Uses the gradient of the encoder's log-density to steer the diffusion process.
+        """
+        # Get the p_mean_var (mean, variance, and log variance)
+        p_mean_var = self.sampler.p_mean_variance(self, x, t)
+
+        # Compute the guidance score (∇ log p(x|z))
+        z = self.encode(x_start)['cond_fn']
+        score_grad = self.score(x_start, z, t)
+
+        # Adjust the mean with the gradient (guidance)
+        new_mean = p_mean_var['mean'] + guidance_scale * score_grad
+
+        return {
+            'mean': new_mean,
+            'variance': p_mean_var['variance'],
+            'log_variance': p_mean_var['log_variance']
+        }
+    
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
         """
         Reparameterization trick to sample from N(mu, var) from
@@ -92,172 +135,54 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
         assert self.conf.noise_net_conf is not None
         return self.noise_net.forward(noise)
 
-    def encode(self, x):
-        cond = self.encoder.forward(x)
-        # print(f'cond_encode.shape: {cond.shape}')
-        return {'cond': cond}
+    def encode(self, x, t=None):
+        if t is None:
+            t = torch.zeros(x.shape[0]).type_as(x)
 
-    @property
-    def stylespace_sizes(self):
-        modules = list(self.input_blocks.modules()) + list(
-            self.middle_block.modules()) + list(self.output_blocks.modules())
-        sizes = []
-        for module in modules:
-            if isinstance(module, ResBlock):
-                linear = module.cond_emb_layers[-1]
-                sizes.append(linear.weight.shape[0])
-        return sizes
+        latent_distribution_parameters = self.encoder(x, t)
 
-    def encode_stylespace(self, x, return_vector: bool = True):
+        channels = latent_distribution_parameters.size(1) // 2
+        mean_z = latent_distribution_parameters[:, :channels]
+        log_var_z = latent_distribution_parameters[:, channels:]
+
+        cond = mean_z + (0.5 * log_var_z).exp() * torch.randn_like(mean_z)
+
+        return {
+            'cond_fn': cond,
+            'mu': mean_z,
+            'logvar': log_var_z
+        }
+
+    def log_density(self, x, z, t):
+        latent_distribution_parameters = self.encoder(x, t)
+        channels = latent_distribution_parameters.size(1) // 2
+        mean_z = latent_distribution_parameters[:, :channels]
+        log_var_z = latent_distribution_parameters[:, channels:]
+
+        # Flatten mean_z and log_var_z for consistent shape handling
+        mean_z_flat = mean_z.view(mean_z.size(0), -1)
+        log_var_z_flat = log_var_z.view(log_var_z.size(0), -1)
+        z_flat = z.view(z.size(0), -1)
+
+        logdensity = -0.5 * torch.sum(torch.square(z_flat - mean_z_flat) / log_var_z_flat.exp(), dim=1)
+        return logdensity
+
+    def score(self, x, z, t):
         """
-        encode to style space
-        """
-        modules = list(self.input_blocks.modules()) + list(
-            self.middle_block.modules()) + list(self.output_blocks.modules())
-        # (n, c)
-        cond = self.encoder.forward(x)
-        S = []
-        for module in modules:
-            if isinstance(module, ResBlock):
-                # (n, c')
-                s = module.cond_emb_layers.forward(cond)
-                S.append(s)
-
-        if return_vector:
-            # (n, sum_c)
-            return torch.cat(S, dim=1)
-        else:
-            return S
-
-    def forward(self,
-                x,
-                t,
-                y=None,
-                x_start=None,
-                cond=None,
-                style=None,
-                noise=None,
-                t_cond=None,
-                **kwargs):
-        """
-        Apply the model to an input batch.
-
-        Args:
-            x_start: the original image to encode
-            cond: output of the encoder
-            noise: random noise (to predict the cond)
+        Returns a function that computes the latent correction score from the encoder.
+        
+        Returns:
+            latent_correction_fn: A function that computes the latent correction score.
         """
 
-        # print(f'cond_fw.shape: {cond}')
-        if t_cond is None:
-            t_cond = t
-
-        if noise is not None:
-            # if the noise is given, we predict the cond from noise
-            cond = self.noise_to_cond(noise)
-
-        if cond is None:
-            if x is not None:
-                assert len(x) == len(x_start), f'{len(x)} != {len(x_start)}'
-
-            tmp = self.encode(x_start)
-            cond = tmp['cond']
-
-        if t is not None:
-            _t_emb = timestep_embedding(t, self.conf.model_channels)
-            _t_cond_emb = timestep_embedding(t_cond, self.conf.model_channels)
-        else:
-            # this happens when training only autoenc
-            _t_emb = None
-            _t_cond_emb = None
-
-        if self.conf.resnet_two_cond:
-            res = self.time_embed.forward(
-                time_emb=_t_emb,
-                cond=cond,
-                time_cond_emb=_t_cond_emb,
-            )
-        else:
-            raise NotImplementedError()
-
-        if self.conf.resnet_two_cond:
-            # two cond: first = time emb, second = cond_emb
-            emb = res.time_emb
-            cond_emb = res.emb
-        else:
-            # one cond = combined of both time and cond
-            emb = res.emb
-            cond_emb = None
-
-        # override the style if given
-        style = style or res.style
-
-        assert (y is not None) == (
-            self.conf.num_classes is not None
-        ), "must specify y if and only if the model is class-conditional"
-
-        if self.conf.num_classes is not None:
-            raise NotImplementedError()
-            # assert y.shape == (x.shape[0], )
-            # emb = emb + self.label_emb(y)
-
-        # where in the model to supply time conditions
-        enc_time_emb = emb
-        mid_time_emb = emb
-        dec_time_emb = emb
-        # where in the model to supply style conditions
-        enc_cond_emb = cond_emb
-        mid_cond_emb = cond_emb
-        dec_cond_emb = cond_emb
-
-        # hs = []
-        hs = [[] for _ in range(len(self.conf.channel_mult))]
-
-        if x is not None:
-            h = x.type(self.dtype)
-
-            # input blocks
-            k = 0
-            for i in range(len(self.input_num_blocks)):
-                for j in range(self.input_num_blocks[i]):
-                    h = self.input_blocks[k](h,
-                                             emb=enc_time_emb,
-                                             cond=enc_cond_emb)
-
-                    # print(i, j, h.shape)
-                    hs[i].append(h)
-                    k += 1
-            assert k == len(self.input_blocks)
-
-            # middle blocks
-            h = self.middle_block(h, emb=mid_time_emb, cond=mid_cond_emb)
-        else:
-            # no lateral connections
-            # happens when training only the autonecoder
-            h = None
-            hs = [[] for _ in range(len(self.conf.channel_mult))]
-
-        # output blocks
-        k = 0
-        for i in range(len(self.output_num_blocks)):
-            for j in range(self.output_num_blocks[i]):
-                # take the lateral connection from the same layer (in reserve)
-                # until there is no more, use None
-                try:
-                    lateral = hs[-i - 1].pop()
-                    # print(i, j, lateral.shape)
-                except IndexError:
-                    lateral = None
-                    # print(i, j, lateral)
-
-                h = self.output_blocks[k](h,
-                                          emb=dec_time_emb,
-                                          cond=dec_cond_emb,
-                                          lateral=lateral)
-                k += 1
-
-        pred = self.out(h)
-        return AutoencReturn(pred=pred, cond=cond)
+        device = x.device
+        x.requires_grad = True
+        ftx = self.log_density(x, z, t)
+        grad_log_density = torch.autograd.grad(outputs=ftx, inputs=x,
+                                                grad_outputs=torch.ones(ftx.size()).to(device),
+                                                create_graph=True, retain_graph=True, only_inputs=True)[0]
+        assert grad_log_density.size() == x.size()
+        return grad_log_density
 
 
 class AutoencReturn(NamedTuple):
@@ -266,16 +191,10 @@ class AutoencReturn(NamedTuple):
 
 
 class EmbedReturn(NamedTuple):
-    # style and time
-    emb: Tensor = None
-    # time only
     time_emb: Tensor = None
-    # style only (but could depend on time)
-    style: Tensor = None
 
 
 class TimeStyleSeperateEmbed(nn.Module):
-    # embed only style
     def __init__(self, time_channels, time_out_channels):
         super().__init__()
         self.time_embed = nn.Sequential(
@@ -283,13 +202,8 @@ class TimeStyleSeperateEmbed(nn.Module):
             nn.SiLU(),
             linear(time_out_channels, time_out_channels),
         )
-        self.style = nn.Identity()
 
-    def forward(self, time_emb=None, cond=None, **kwargs):
-        if time_emb is None:
-            # happens with autoenc training mode
-            time_emb = None
-        else:
+    def forward(self, time_emb=None, **kwargs):
+        if time_emb is not None:
             time_emb = self.time_embed(time_emb)
-        style = self.style(cond)
-        return EmbedReturn(emb=style, time_emb=time_emb, style=style)
+        return EmbedReturn(time_emb=time_emb)

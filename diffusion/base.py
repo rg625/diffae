@@ -1,5 +1,5 @@
 """
-This code started out as a PyTorch port of Ho et al's diffusion models:
+This cp_meande started out as a PyTorch port of Ho et al's diffusion models:
 https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/diffusion_utils_2.py
 
 Docstrings have been added, as well as DDIM sampling and a new collection of beta schedules.
@@ -115,6 +115,8 @@ class GaussianDiffusionBeatGans:
         :return: a dict with the key "loss" containing a tensor of shape [N].
                  Some mean or variance settings may also have other keys.
         """
+        # print(f'model_kwargs: {model_kwargs.keys()}')
+
         if model_kwargs is None:
             model_kwargs = {}
         if noise is None:
@@ -409,6 +411,7 @@ class GaussianDiffusionBeatGans:
 
         This uses the conditioning strategy from Sohl-Dickstein et al. (2015).
         """
+        print('cond_fn existing in condition_mean')
         gradient = cond_fn(x, self._scale_timesteps(t), **model_kwargs)
         new_mean = (p_mean_var["mean"].float() +
                     p_mean_var["variance"] * gradient.float())
@@ -424,6 +427,8 @@ class GaussianDiffusionBeatGans:
         Unlike condition_mean(), this instead uses the conditioning strategy
         from Song et al (2020).
         """
+        print('cond_fn existing in condition_score')
+
         alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
 
         eps = self._predict_eps_from_xstart(x, t, p_mean_var["pred_xstart"])
@@ -475,6 +480,7 @@ class GaussianDiffusionBeatGans:
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
                         )  # no noise when t == 0
         if cond_fn is not None:
+            print('cond_fn existing in p_sample')
             out["mean"] = self.condition_mean(cond_fn,
                                               out,
                                               x,
@@ -527,6 +533,8 @@ class GaussianDiffusionBeatGans:
                 device=device,
                 progress=progress,
         ):
+            print('cond_fn existing in p_sample_loop')
+
             final = sample
         return final["sample"]
 
