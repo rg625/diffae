@@ -122,6 +122,26 @@ def ffhq128_ddpm():
     conf.make_model_conf()
     return conf
 
+def cifar10_ddpm():
+    conf = ddpm()
+    conf.data_name = 'cifar10'
+    conf.warmup = 0
+    conf.total_samples = 48_000_000
+    conf.img_size = 128
+    conf.net_ch = 128
+    conf.name = 'cifar10_ddpm'
+    # channels:
+    # 3 => 128 * 1 => 128 * 1 => 128 * 2 => 128 * 3 => 128 * 4
+    # sizes:
+    # 128 => 128 => 64 => 32 => 16 => 8
+    conf.net_ch_mult = (1, 1, 2, 3, 4)
+    conf.eval_every_samples = 1_000_000
+    conf.eval_ema_every_samples = 1_000_000
+    conf.scale_up_gpus(4)
+    conf.eval_ema_every_samples = 10_000_000
+    conf.eval_every_samples = 10_000_000
+    conf.make_model_conf()
+    return conf
 
 def ffhq128_autoenc_base():
     conf = autoenc_base()
@@ -194,6 +214,15 @@ def ffhq128_ddpm_130M():
     conf.name = 'ffhq128_ddpm_130M_ss1'
     return conf
 
+def cifar10_ddpm_130M():
+    conf = cifar10_ddpm()
+    conf.batch_size = 32
+    conf.sample_size = 32
+    conf.total_samples = 130_000_000
+    conf.eval_ema_every_samples = 10_000_000
+    conf.eval_every_samples = 10_000_000
+    conf.name = 'cifar10_ddpm_130M'
+    return conf
 
 def ffhq128_autoenc_130M():
     # conf.conf_ddpm = ffhq128_ddpm_130M()

@@ -39,6 +39,7 @@ data_paths = {
         'datasets/celeba_anno/CelebAMask-HQ-attribute-anno.txt'),
     'celeba_relight':
     os.path.expanduser('datasets/celeba_hq_light/celeba_light.txt'),
+    'cifar10': os.path.expanduser('~/datasets'),
 }
 
 
@@ -298,6 +299,13 @@ class TrainConfig(BaseConfig):
         elif self.data_name == 'celebalmdb':
             # always use d2c crop
             return CelebAlmdb(path=path or self.data_path,
+                              image_size=self.img_size,
+                              original_resolution=None,
+                              crop_d2c=True,
+                              **kwargs)
+        elif self.data_name == 'cifar10':
+            # always use d2c crop
+            return CIFAR10Dataset(path=path or self.data_path,
                               image_size=self.img_size,
                               original_resolution=None,
                               crop_d2c=True,

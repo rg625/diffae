@@ -5,7 +5,7 @@ from pathlib import Path
 import lmdb
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import transforms
+from torchvision import transforms, datasets
 from torchvision.datasets import CIFAR10, LSUNClass
 import torch
 import pandas as pd
@@ -189,6 +189,46 @@ class FFHQlmdb(Dataset):
             img = self.transform(img)
         return {'img': img, 'index': index}
 
+
+class CIFAR10Dataset(Dataset):
+    def __init__(self,
+                 path=os.path.expanduser('~/datasets'),
+                 image_size=32,
+                 split='train',
+                 as_tensor: bool = True,
+                 do_augment: bool = True,
+                 do_normalize: bool = True,
+                 **kwargs):
+        assert split in ['train', 'test'], "split must be 'train' or 'test'"
+
+        transform_list = [transforms.Resize(image_size)]
+        
+        if do_augment and split == 'train':
+            transform_list.append(transforms.RandomHorizontalFlip())
+
+        if as_tensor:
+            transform_list.append(transforms.ToTensor())
+
+        if do_normalize:
+            transform_list.append(
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            )
+
+        transform = transforms.Compose(transform_list)
+
+        self.dataset = datasets.CIFAR10(
+            root=path,
+            train=(split == 'train'),
+            download=False,
+            transform=transform
+        )
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        img, label = self.dataset[index]
+        return {'img': img, 'label': label, 'index': index}
 
 class Crop:
     def __init__(self, x1, x2, y1, y2):
