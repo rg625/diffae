@@ -168,14 +168,14 @@ class ConditionalModel:
                 # Add evaluation metrics here as needed
 
     def sample(self, num_samples):
-        self.model.eval()
+        self.ema_model.eval()
         noise = torch.randn(num_samples, 3, self.conf.img_size, self.conf.img_size, device=self.device)
         samples = self.eval_sampler.sample(self.ema_model, noise=noise)
         samples = (samples + 1) / 2
         return samples
 
     def save_checkpoint(self, epoch):
-        checkpoint_path = os.path.join(self.conf.logdir, f"checkpoint_epoch_{epoch}.pth")
+        checkpoint_path = os.path.join(self.conf.logdir, f"last.ckpt")
         torch.save({
             "model_state_dict": self.model.state_dict(),
             "ema_model_state_dict": self.ema_model.state_dict(),

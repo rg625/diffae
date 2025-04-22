@@ -127,7 +127,7 @@ def cifar10_ddpm():
     conf.data_name = 'cifar10'
     conf.warmup = 0
     conf.total_samples = 48_000_000
-    conf.img_size = 128
+    conf.img_size = 32
     conf.net_ch = 128
     conf.name = 'cifar10_ddpm'
     # channels:
@@ -145,7 +145,7 @@ def cifar10_ddpm():
 
 def ffhq128_autoenc_base():
     conf = autoenc_base()
-    conf.data_name = 'ffhqlmdb256'
+    conf.data_name = 'cifar10'
     conf.scale_up_gpus(4)
     conf.img_size = 128
     conf.net_ch = 128
@@ -159,6 +159,21 @@ def ffhq128_autoenc_base():
     conf.make_model_conf()
     return conf
 
+def cifar10_autoenc_base():
+    conf = autoenc_base()
+    conf.data_name = 'cifar10'
+    conf.scale_up_gpus(4)
+    conf.img_size = 32
+    conf.net_ch = 128
+    # conf.sample_size = 16
+    # final resolution = 8x8
+    conf.net_ch_mult = (1, 1, 2, 3, 4)
+    # final resolution = 4x4
+    conf.net_enc_channel_mult = (1, 1, 2, 3, 4, 4)
+    conf.eval_ema_every_samples = 10_000_000
+    conf.eval_every_samples = 10_000_000
+    conf.make_model_conf()
+    return conf
 
 def ffhq256_autoenc():
     conf = ffhq128_autoenc_base()
@@ -216,8 +231,8 @@ def ffhq128_ddpm_130M():
 
 def cifar10_ddpm_130M():
     conf = cifar10_ddpm()
-    conf.batch_size = 32
-    conf.sample_size = 32
+    conf.batch_size = 256
+    conf.sample_size = 256
     conf.total_samples = 130_000_000
     conf.eval_ema_every_samples = 10_000_000
     conf.eval_every_samples = 10_000_000
@@ -241,6 +256,22 @@ def ffhq128_autoenc_130M():
     conf.name = 'ffhq128_autoenc_130M'
     return conf
 
+def cifar10_autoenc_130M():
+    # conf.conf_ddpm = ffhq128_ddpm_130M()
+    conf = cifar10_autoenc_base()
+    conf.batch_size = 256
+    conf.sample_size = 256
+    # conf.sample_size = 32
+    conf.conf_ddpm = cifar10_ddpm_130M()
+    conf.pretrain = PretrainConfig(
+        name='cifar10_ddpm_130M',
+        path=f'checkpoints/{conf.conf_ddpm.name}/last.ckpt',
+    )
+    conf.total_samples = 130_000_000
+    conf.eval_ema_every_samples = 10_000_000
+    conf.eval_every_samples = 10_000_000
+    conf.name = 'cifar10_autoenc'
+    return conf
 
 def horse128_ddpm():
     conf = ffhq128_ddpm()

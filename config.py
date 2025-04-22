@@ -428,31 +428,6 @@ class TrainConfig(BaseConfig):
                 latent_net_conf=latent_net_conf,
                 resnet_cond_channels=self.net_beatgans_resnet_cond_channels,
             )
-            # self.model_conf = BeatGANsUNetConfig(
-            #     attention_resolutions=self.net_attn,
-            #     channel_mult=self.net_ch_mult,
-            #     conv_resample=True,
-            #     dims=2,
-            #     dropout=self.dropout,
-            #     embed_channels=self.net_beatgans_embed_channels,
-            #     image_size=self.img_size,
-            #     in_channels=3,
-            #     model_channels=self.net_ch,
-            #     num_classes=None,
-            #     num_head_channels=-1,
-            #     num_heads_upsample=-1,
-            #     num_heads=self.net_beatgans_attn_head,
-            #     num_res_blocks=self.net_num_res_blocks,
-            #     num_input_res_blocks=self.net_num_input_res_blocks,
-            #     out_channels=self.model_out_channels,
-            #     resblock_updown=self.net_resblock_updown,
-            #     use_checkpoint=self.net_beatgans_gradient_checkpoint,
-            #     use_new_attention_order=False,
-            #     resnet_two_cond=self.net_beatgans_resnet_two_cond,
-            #     resnet_use_zero_module=self.
-            #     net_beatgans_resnet_use_zero_module,
-            # )
-
         else:
             raise NotImplementedError(self.model_name)
 
@@ -548,26 +523,6 @@ class TrainConfig(BaseConfig):
                 resnet_cond_channels=self.net_beatgans_resnet_cond_channels,
             )
 
-            # self.model_conf = BeatGANsEncoderConfig(
-            #     image_size=self.img_size,
-            #     in_channels=3,
-            #     model_channels=self.net_ch,
-            #     out_hid_channels=self.style_ch,
-            #     out_channels=self.model_out_channels,
-            #     num_res_blocks=self.net_num_res_blocks,
-            #     attention_resolutions=self.net_attn,
-            #     dropout=self.dropout,
-            #     channel_mult=self.net_enc_channel_mult,
-            #     use_time_condition=False,
-            #     conv_resample=True,
-            #     dims=2,
-            #     use_checkpoint=self.net_beatgans_gradient_checkpoint,
-            #     num_heads=self.net_beatgans_attn_head,
-            #     num_head_channels=-1,
-            #     resblock_updown=self.net_resblock_updown,
-            #     use_new_attention_order=False,
-            #     pool=self.net_enc_pool,
-            # )
         else:
             raise NotImplementedError(self.model_name)
 
